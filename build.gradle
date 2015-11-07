@@ -1,0 +1,79 @@
+buildscript {
+  repositories {
+    jcenter()
+  }
+  dependencies {
+    classpath 'com.bmuschko:gradle-tomcat-plugin:latest.release'
+  }
+}
+apply plugin: 'war'
+apply plugin: 'com.bmuschko.tomcat'
+apply plugin: 'com.bmuschko.tomcat-base'
+apply plugin: 'eclipse'
+
+repositories {
+    jcenter()
+}
+
+dependencies {
+    providedCompile 'javax:javaee-web-api:6.0'
+    compile 'org.slf4j:slf4j-api:1.7.12'
+    testCompile 'junit:junit:4.12'
+
+    def tomcatVersion = '7.0.59'
+    tomcat "org.apache.tomcat.embed:tomcat-embed-core:${tomcatVersion}",
+           "org.apache.tomcat.embed:tomcat-embed-logging-juli:${tomcatVersion}",
+           "org.apache.tomcat.embed:tomcat-embed-jasper:${tomcatVersion}"
+}
+
+// eclipse plugin の設定
+import org.gradle.plugins.ide.eclipse.model.SourceFolder
+eclipse {
+  classpath.file {
+    beforeMerged { classpath ->
+      classpath.entries.clear()
+    }
+    whenMerged {  cp ->
+      // Eclipse のビルドファイルの配置を Tomcat のリロード判定対象と同じようにする。
+      // この設定を行うと、tomcatRun で実行中のサーバが、
+      // eclipse でビルドが走った時に自動リロードされるようになる。
+      cp.entries.findAll { it instanceof SourceFolder && it.path.startsWith("src/main/") }*.output = "src/main/webapp/WEB-INF/classes"
+      // Gradle でのテストのために、Gradle の出力先に揃えておく
+      cp.entries.findAll { it instanceof SourceFolder && it.path.startsWith("src/test/") }*.output = "build/classes/test"
+      cp.entries.findAll { it instanceof SourceFolder && it.path.startsWith("src/test/resources") }*.output = "build/resources/test"
+      cp.entries.removeAll { it.kind == "output" }
+    }
+  }
+}
+
+clean {
+  // add customized class output path to deletion targets of 'clean' task.
+  delete << 'src/main/webapp/WEB-INF/classes'
+}
+
+task tomcatDebug {
+   // Create a new task tomcatDebug, add a description and add it to the same group as tomcatRun
+   description "Starting Tomcat with debugger enabled on port 5008."
+   group "web application"
+} << {
+ 
+   org.gradle.tooling.ProjectConnection conn = org.gradle.tooling.GradleConnector.newConnector()
+      .forProjectDirectory(new File("."))
+      .connect();
+ 
+   try {
+ 
+      org.gradle.tooling.model.build.BuildEnvironment env = conn.getModel(org.gradle.tooling.model.build.BuildEnvironment.class)
+      org.gradle.tooling.BuildLauncher build = conn.newBuild();
+ 
+      build.forTasks("tomcatRun")
+      // Enable debug via jvm arguments and append JVM arguments of the currently running vm (except -D).
+      build.setJvmArguments("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8000", *env.java.jvmArguments)
+ 
+      // Run tomcatRun in the new JVM with debug parameters
+      build.run()
+ 
+   } finally {
+      conn.close();
+   }
+}
